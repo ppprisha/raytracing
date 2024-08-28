@@ -1639,7 +1639,7 @@ and a maximum. We'll end up using this class quite often as we proceed.
     // Common Headers
 
     #include "color.h"
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ Highlight
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     #include "interval.h"
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
     #include "ray.h"
@@ -1997,7 +1997,7 @@ as desired with the following code snippet, added to `rtweekend.h`:
 
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
     #include <cmath>
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ Highlight
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     #include <cstdlib>
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
     #include <iostream>
@@ -2012,7 +2012,7 @@ as desired with the following code snippet, added to `rtweekend.h`:
     }
 
 
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ Highlight
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     inline double random_double() {
         // Returns a random real in [0,1).
         return std::rand() / (RAND_MAX + 1.0);
@@ -2276,7 +2276,7 @@ generate arbitrary random vectors:
         }
 
 
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ Highlight
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
         static vec3 random() {
             return vec3(random_double(), random_double(), random_double());
         }
@@ -2294,22 +2294,28 @@ the surface of a hemisphere. There are analytical methods of doing this, but the
 surprisingly complicated to understand, and quite a bit complicated to implement. Instead, we'll use
 what is typically the easiest algorithm: A rejection method. A rejection method works by repeatedly
 generating random samples until we produce a sample that meets the desired criteria. In other words,
-keep rejecting samples until you find a good one.
+keep rejecting bad samples until you find a good one.
 
 There are many equally valid ways of generating a random vector on a hemisphere using the rejection
 method, but for our purposes we will go with the simplest, which is:
 
-1. Generate a random vector inside of the unit sphere
-2. Normalize this vector
+1. Generate a random vector inside the unit sphere
+2. Normalize this vector to extend it to the sphere surface
 3. Invert the normalized vector if it falls onto the wrong hemisphere
 
 <div class='together'>
-First, we will use a rejection method to generate the random vector inside the unit sphere. Pick a
-random point in the cube enclosing the unit sphere (that is, where $x$, $y$, and $z$ are all in the
-range $[0,1]$), and reject this point if it is outside the unit sphere.
+First, we will use a rejection method to generate the random vector inside the unit sphere (that is,
+a sphere of radius 1). Pick a random point inside the cube enclosing the unit sphere (that is, where
+$x$, $y$, and $z$ are all in the range $[-1,+1]$). If this point lies outside the unit
+sphere, then generate a new one until we find one that lies inside or on the unit sphere.
 
-  ![Figure [sphere-vec]: Two vectors were rejected before finding a good one
+  ![Figure [sphere-vec]: Two vectors were rejected before finding a good one (pre-normalization)
   ](../images/fig-1.11-sphere-vec.jpg)
+
+  ![Figure [sphere-vec]: The accepted random vector is normalized to produce a unit vector
+  ](../images/fig-1.12-sphere-unit-vec.jpg)
+
+Here's our first draft of the function:
 
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
     ...
@@ -2319,50 +2325,46 @@ range $[0,1]$), and reject this point if it is outside the unit sphere.
     }
 
 
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ Highlight
-    inline vec3 random_in_unit_sphere() {
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
+    inline vec3 random_unit_vector() {
         while (true) {
             auto p = vec3::random(-1,1);
-            if (p.length_squared() < 1)
-                return p;
+            auto lensq = p.length_squared();
+            if (lensq <= 1)
+                return p / sqrt(lensq);
         }
     }
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    [Listing [random-in-unit-sphere]: <kbd>[vec3.h]</kbd> The random_in_unit_sphere() function]
+    [Listing [random-in-unit-sphere]: <kbd>[vec3.h]</kbd> The random_unit_vector() function, version one]
 
 </div>
 
-<div class='together'>
-Once we have a random vector in the unit sphere we need to normalize it to get a vector _on_ the
-unit sphere.
+Sadly, we have a small floating-point abstraction leak to deal with. Since floating-point numbers
+have finite precision, a very small value can underflow to zero when squared. So if all three
+coordinates are small enough (that is, very near the center of the sphere), the norm of the vector
+will be zero, and thus normalizing will yield the bogus vector $[\pm\infty, \pm\infty, \pm\infty]$.
+To fix this, we'll also reject points that lie inside this "black hole" around the center. With
+double precision (64-bit floats), we can safely support values greater than $10^{-160}$.
 
-  ![Figure [sphere-vec]: The accepted random vector is normalized to produce a unit vector
-  ](../images/fig-1.12-sphere-unit-vec.jpg)
+Here's our more robust function:
 
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
-    ...
-
-    inline vec3 random_in_unit_sphere() {
+    inline vec3 random_unit_vector() {
         while (true) {
             auto p = vec3::random(-1,1);
-            if (p.length_squared() < 1)
-                return p;
+            auto lensq = p.length_squared();
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
+            if (1e-160 < lensq && lensq <= 1)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
+                return p / sqrt(lensq);
         }
     }
-
-
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ Highlight
-    inline vec3 random_unit_vector() {
-        return unit_vector(random_in_unit_sphere());
-    }
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    [Listing [random-unit-vec]: <kbd>[vec3.h]</kbd> Random vector on the unit sphere]
-
-</div>
+    [Listing [random-in-unit-sphere]: <kbd>[vec3.h]</kbd> The random_unit_vector() function, version one]
 
 <div class='together'>
-And now that we have a random vector on the surface of the unit sphere, we can determine if it is on
-the correct hemisphere by comparing against the surface normal:
+Now that we have a random vector on the surface of the unit sphere, we can determine if it is on the
+correct hemisphere by comparing against the surface normal:
 
   ![Figure [normal-hor]: The normal vector tells us which hemisphere we need
   ](../images/fig-1.13-surface-normal.jpg)
@@ -2378,11 +2380,16 @@ the dot product is negative, then we need to invert the vector.
     ...
 
     inline vec3 random_unit_vector() {
-        return unit_vector(random_in_unit_sphere());
+        while (true) {
+            auto p = vec3::random(-1,1);
+            auto lensq = p.length_squared();
+            if (1e-160 < lensq && lensq <= 1)
+                return p / sqrt(lensq);
+        }
     }
 
 
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ Highlight
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     inline vec3 random_on_hemisphere(const vec3& normal) {
         vec3 on_unit_sphere = random_unit_vector();
         if (dot(on_unit_sphere, normal) > 0.0) // In the same hemisphere as the normal
@@ -2792,7 +2799,7 @@ This suggests the abstract class:
 
     #include "rtweekend.h"
 
-    class hit_record;
+    #include "hittable.h"
 
     class material {
       public:
@@ -2896,7 +2903,7 @@ _fractional reflectance_. Albedo will vary with material color and (as we will l
 glass materials) can also vary with incident viewing direction (the direction of the incoming ray).
 
 Lambertian (diffuse) reflectance can either always scatter and attenuate light according to its
-reflectance $R$, or it can sometimes scatter (with probabilty $1-R$) with no attenuation (where a
+reflectance $R$, or it can sometimes scatter (with probability $1-R$) with no attenuation (where a
 ray that isn't scattered is just absorbed into the material). It could also be a mixture of both
 those strategies. We will choose to always scatter, so implementing Lambertian materials becomes a
 simple task:
@@ -2907,7 +2914,7 @@ simple task:
     };
 
 
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ Highlight
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     class lambertian : public material {
       public:
         lambertian(const color& albedo) : albedo(albedo) {}
@@ -2949,7 +2956,7 @@ absolute value of its input.
         }
 
 
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ Highlight
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
         bool near_zero() const {
             // Return true if the vector is close to zero in all dimensions.
             auto s = 1e-8;
@@ -3001,8 +3008,8 @@ reflected from a metal mirror? Vector math is our friend here:
 The reflected ray direction in red is just $\mathbf{v} + 2\mathbf{b}$. In our design, $\mathbf{n}$
 is a unit vector (length one), but $\mathbf{v}$ may not be. To get the vector $\mathbf{b}$, we scale
 the normal vector by the length of the projection of $\mathbf{v}$ onto $\mathbf{n}$, which is given
-by the dot project $\mathbf{v} \cdot \mathbf{n}$. (If $\mathbf{n}$ were not a unit vector, we would
-also need to divide this dot project by the length of $\mathbf{n}$.) Finally, because $\mathbf{v}$
+by the dot product $\mathbf{v} \cdot \mathbf{n}$. (If $\mathbf{n}$ were not a unit vector, we would
+also need to divide this dot product by the length of $\mathbf{n}$.) Finally, because $\mathbf{v}$
 points _into_ the surface, and we want $\mathbf{b}$ to point _out_ of the surface, we need to negate
 this projection length.
 
@@ -3016,7 +3023,7 @@ Putting everything together, we get the following computation of the reflected v
     }
 
 
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ Highlight
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     inline vec3 reflect(const vec3& v, const vec3& n) {
         return v - 2*dot(v,n)*n;
     }
@@ -3034,7 +3041,7 @@ The metal material just reflects rays using that formula:
     };
 
 
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ Highlight
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     class metal : public material {
       public:
         metal(const color& albedo) : albedo(albedo) {}
@@ -3331,7 +3338,7 @@ When we combine them back together, we can write a function to calculate $\mathb
     }
 
 
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ Highlight
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     inline vec3 refract(const vec3& uv, const vec3& n, double etai_over_etat) {
         auto cos_theta = std::fmin(dot(-uv, n), 1.0);
         vec3 r_out_perp =  etai_over_etat * (uv + cos_theta*n);
@@ -3354,7 +3361,7 @@ And the dielectric material that always refracts is:
     };
 
 
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ Highlight
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     class dielectric : public material {
       public:
         dielectric(double refraction_index) : refraction_index(refraction_index) {}
@@ -4041,7 +4048,7 @@ Since we'll be choosing random points from the defocus disk, we'll need a functi
     }
 
 
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ Highlight
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     inline vec3 random_in_unit_disk() {
         while (true) {
             auto p = vec3(random_double(-1,1), random_double(-1,1), 0);
@@ -4232,7 +4239,7 @@ Let’s make the image on the cover of this book -- lots of random spheres.
         hittable_list world;
 
 
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ Highlight
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
         auto ground_material = make_shared<lambertian>(color(0.5, 0.5, 0.5));
         world.add(make_shared<sphere>(point3(0,-1000,0), 1000, ground_material));
 
@@ -4277,7 +4284,7 @@ Let’s make the image on the cover of this book -- lots of random spheres.
         camera cam;
 
 
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ Highlight
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
         cam.aspect_ratio      = 16.0 / 9.0;
         cam.image_width       = 1200;
         cam.samples_per_pixel = 500;
