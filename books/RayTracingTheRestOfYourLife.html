@@ -8,9 +8,9 @@
                                **Ray Tracing: The Rest of Your Life**
                    [Peter Shirley][], [Trevor David Black][], [Steve Hollasch][]
                                                 <br>
-                                     Version 4.0.1, 20XX-XX-XX
-                                     Version 4.1.0, 20XX-XX-XX
-                                     Version 5.0.0, 20XX-XX-XX
+                                     Version 4.0.2, 2024-10-01
+                                     Version 4.1.0, 2024-12-31
+                                     Version 5.0.0, 2025-XX-XX
                                       **DRAFT IN DEVELOPMENT**
                                                 <br>
                       Copyright 2018-2024 Peter Shirley. All rights reserved.
@@ -2278,8 +2278,6 @@ class because it won't really be more complicated than utility functions:
     #ifndef ONB_H
     #define ONB_H
 
-    #include "rtweekend.h"
-
     class onb {
       public:
         onb(const vec3& n) {
@@ -2311,8 +2309,6 @@ class because it won't really be more complicated than utility functions:
 We can rewrite our Lambertian material using this to get:
 
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
-    #include "rtweekend.h"
-
     #include "hittable.h"
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     #include "onb.h"
@@ -2729,8 +2725,6 @@ works, and for `pdf` this implies:
     #ifndef PDF_H
     #define PDF_H
 
-    #include "rtweekend.h"
-
     #include "onb.h"
 
 
@@ -2799,8 +2793,6 @@ Next, let’s try a cosine density:
 We can try this cosine PDF in the `ray_color()` function:
 
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
-    #include "rtweekend.h"
-
     #include "hittable.h"
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     #include "pdf.h"
@@ -2883,10 +2875,6 @@ This yields an exactly matching result so all we’ve done so far is move some c
 Sampling Directions towards a Hittable
 ---------------------------------------
 Now we can try sampling directions toward a `hittable`, like the light.
-
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
-    #include "rtweekend.h"
-
 
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     #include "hittable_list.h"
@@ -3349,8 +3337,6 @@ this ray is diffuse or specular. Fortunately, we have decided that we should onl
 We can redesign `material` and stuff all the new arguments into a class like we did for `hittable`:
 
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
-    #include "rtweekend.h"
-
     #include "hittable.h"
     #include "onb.h"
     #include "texture.h"
@@ -3388,9 +3374,6 @@ We can redesign `material` and stuff all the new arguments into a class like we 
 The `lambertian` material becomes simpler:
 
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
-    #include "rtweekend.h"
-
-
     #include "hittable.h"
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ delete
     #include "onb.h"
@@ -3770,14 +3753,15 @@ The sphere class needs the two PDF-related functions:
             if (!this->hit(ray(origin, direction), interval(0.001, infinity), rec))
                 return 0;
 
-            auto cos_theta_max = std::sqrt(1 - radius*radius/(center1 - origin).length_squared());
+            auto dist_squared = (center.at(0) - origin).length_squared();
+            auto cos_theta_max = std::sqrt(1 - radius*radius/dist_squared);
             auto solid_angle = 2*pi*(1-cos_theta_max);
 
             return  1 / solid_angle;
         }
 
         vec3 random(const point3& origin) const override {
-            vec3 direction = center1 - origin;
+            vec3 direction = center.at(0) - origin;
             auto distance_squared = direction.length_squared();
             onb uvw(direction);
             return uvw.transform(random_to_sphere(radius, distance_squared));
@@ -4031,8 +4015,8 @@ Basic Data
   - **Title (series)**: “Ray Tracing in One Weekend Series”
   - **Title (book)**: “Ray Tracing: The Rest of Your Life”
   - **Author**: Peter Shirley, Trevor David Black, Steve Hollasch
-  - **Version/Edition**: vXX.XX.XX
-  - **Date**: 20XX-XX-XX
+  - **Version/Edition**: (XXVersion)
+  - **Date**: XXYear-XXMonth-XXDay
   - **URL (series)**: <https://raytracing.github.io/>
   - **URL (book)**: <https://raytracing.github.io/books/RayTracingTheRestOfYourLife.html>
 
@@ -4053,13 +4037,13 @@ Snippets
 
   ### LaTeX and BibTex
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    ~\cite{Shirley20XXRTW3}
+    ~\cite{ShirleyXXYearRTW3}
 
-    @misc{Shirley20XXRTW3,
+    @misc{ShirleyXXYearRTW3,
        title = {Ray Tracing: The Rest of Your Life},
        author = {Peter Shirley, Trevor David Black, Steve Hollasch},
-       year = {20XX},
-       month = {XXXXXX},
+       year = {XXYear},
+       month = {XXMonth},
        note = {\small \texttt{https://raytracing.github.io/books/RayTracingTheRestOfYourLife.html}},
        url = {https://raytracing.github.io/books/RayTracingTheRestOfYourLife.html}
     }
@@ -4069,13 +4053,13 @@ Snippets
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     \usepackage{biblatex}
 
-    ~\cite{Shirley20XXRTW3}
+    ~\cite{ShirleyXXYearRTW3}
 
-    @online{Shirley20XXRTW3,
+    @online{ShirleyXXYearRTW3,
        title = {Ray Tracing: The Rest of Your Life},
        author = {Peter Shirley, Trevor David Black, Steve Hollasch},
-       year = {20XX},
-       month = {XXXXXX},
+       year = {XXYear},
+       month = {XXMonth},
        url = {https://raytracing.github.io/books/RayTracingTheRestOfYourLife.html}
     }
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

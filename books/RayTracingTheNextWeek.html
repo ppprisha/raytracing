@@ -8,9 +8,9 @@
                                    **Ray Tracing: The Next Week**
                    [Peter Shirley][], [Trevor David Black][], [Steve Hollasch][]
                                                 <br>
-                                     Version 4.0.1, 20XX-XX-XX
-                                     Version 4.1.0, 20XX-XX-XX
-                                     Version 5.0.0, 20XX-XX-XX
+                                     Version 4.0.2, 2024-10-01
+                                     Version 4.1.0, 2024-12-31
+                                     Version 5.0.0, 2025-XX-XX
                                       **DRAFT IN DEVELOPMENT**
                                                 <br>
                       Copyright 2018-2024 Peter Shirley. All rights reserved.
@@ -178,56 +178,41 @@ Adding Moving Spheres
 ----------------------
 Now to create a moving object. I’ll update the sphere class so that its center moves linearly from
 `center1` at time=0 to `center2` at time=1. (It continues on indefinitely outside that time
-interval, so it really can be sampled at any time.)
+interval, so it really can be sampled at any time.) We'll do this by replacing the 3D center point
+with a 3D ray that describes the original position at time=0 and the displacement to the end
+position at time=1.
 
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
     class sphere : public hittable {
       public:
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
         // Stationary Sphere
-        sphere(const point3& center, double radius, shared_ptr<material> mat)
-          : center1(center), radius(std::fmax(0,radius)), mat(mat), is_moving(false) {}
+        sphere(const point3& static_center, double radius, shared_ptr<material> mat)
+          : center(static_center, vec3(0,0,0)), radius(std::fmax(0,radius)), mat(mat) {}
 
         // Moving Sphere
         sphere(const point3& center1, const point3& center2, double radius,
                shared_ptr<material> mat)
-          : center1(center1), radius(std::fmax(0,radius)), mat(mat), is_moving(true)
-        {
-            center_vec = center2 - center1;
-        }
+          : center(center1, center2 - center1), radius(std::fmax(0,radius)), mat(mat) {}
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
 
         ...
 
       private:
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
-        point3 center1;
+        ray center;
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
         double radius;
         shared_ptr<material> mat;
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
-        bool is_moving;
-        vec3 center_vec;
 
-        point3 sphere_center(double time) const {
-            // Linearly interpolate from center1 to center2 according to time, where t=0 yields
-            // center1, and t=1 yields center2.
-            return center1 + time*center_vec;
-        }
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
     };
-
     #endif
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     [Listing [moving-sphere]: <kbd>[sphere.h]</kbd> A moving sphere]
 
-An alternative to making special stationary spheres is to just make them all move, but stationary
-spheres have the same begin and end position. I’m on the fence about that trade-off between simpler
-code and more efficient stationary spheres, so let your design taste guide you.
-
 <div class='together'>
 The updated `sphere::hit()` function is almost identical to the old `sphere::hit()` function:
-`center` just needs to query a function `sphere_center(time)`:
+we just need to now determine the current position of the animated center:
 
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
     class sphere : public hittable {
@@ -235,13 +220,25 @@ The updated `sphere::hit()` function is almost identical to the old `sphere::hit
         ...
         bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
-            point3 center = is_moving ? sphere_center(r.time()) : center1;
+            point3 current_center = center.at(r.time());
+            vec3 oc = current_center - r.origin();
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
-            vec3 oc = center - r.origin();
             auto a = r.direction().length_squared();
             auto h = dot(r.direction(), oc);
             auto c = oc.length_squared() - radius*radius;
+
             ...
+
+            rec.t = root;
+            rec.p = r.at(rec.t);
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
+            vec3 outward_normal = (rec.p - current_center) / radius;
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
+            rec.set_face_normal(r, outward_normal);
+            get_sphere_uv(outward_normal, rec.u, rec.v);
+            rec.mat = mat;
+
+            return true;
         }
         ...
     };
@@ -605,8 +602,6 @@ Now we have everything we need to implement the new AABB class.
     #ifndef AABB_H
     #define AABB_H
 
-    #include "rtweekend.h"
-
     class aabb {
       public:
         interval x, y, z;
@@ -680,11 +675,6 @@ we've designed our interval class, the math all works out.
 Finally, recall that some objects may be animated. Such objects should return their bounds over the
 entire range of motion, from time=0 to time=1.
 
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
-    ...
-    #include "rtweekend.h"
-
-
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     #include "aabb.h"
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
@@ -713,12 +703,12 @@ For a stationary sphere, the `bounding_box` function is easy:
     class sphere : public hittable {
       public:
         // Stationary Sphere
-        sphere(const point3& center, double radius, shared_ptr<material> mat)
+        sphere(const point3& static_center, double radius, shared_ptr<material> mat)
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
-          : center1(center), radius(std::fmax(0,radius)), mat(mat), is_moving(false)
+          : center(static_center, vec3(0,0,0)), radius(std::fmax(0,radius)), mat(mat)
         {
             auto rvec = vec3(radius, radius, radius);
-            bbox = aabb(center1 - rvec, center1 + rvec);
+            bbox = aabb(static_center - rvec, static_center + rvec);
         }
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
 
@@ -730,11 +720,9 @@ For a stationary sphere, the `bounding_box` function is easy:
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
 
       private:
-        point3 center1;
+        ray center;
         double radius;
         shared_ptr<material> mat;
-        bool is_moving;
-        vec3 center_vec;
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
         aabb bbox;
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
@@ -756,17 +744,15 @@ two boxes.
         // Moving Sphere
         sphere(const point3& center1, const point3& center2, double radius,
                shared_ptr<material> mat)
-          : center1(center1), radius(std::fmax(0,radius)), mat(mat), is_moving(true)
-        {
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
+          : center(center1, center2 - center1), radius(std::fmax(0,radius)), mat(mat)
+        {
             auto rvec = vec3(radius, radius, radius);
-            aabb box1(center1 - rvec, center1 + rvec);
-            aabb box2(center2 - rvec, center2 + rvec);
+            aabb box1(center.at(0) - rvec, center.at(0) + rvec);
+            aabb box2(center.at(1) - rvec, center.at(1) + rvec);
             bbox = aabb(box1, box2);
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
-
-            center_vec = _center2 - _center1;
         }
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
 
         ...
     };
@@ -836,10 +822,6 @@ Creating Bounding Boxes of Lists of Objects
 Now we'll update the `hittable_list` object, computing the bounds of its children. We'll update the
 bounding box incrementally as each new child is added.
 
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
-    #include "rtweekend.h"
-
-
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     #include "aabb.h"
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
@@ -889,8 +871,6 @@ I am a fan of the one class design when feasible. Here is such a class:
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
     #ifndef BVH_H
     #define BVH_H
-
-    #include "rtweekend.h"
 
     #include "aabb.h"
     #include "hittable.h"
@@ -955,8 +935,6 @@ The following code uses three methods--`box_x_compare`, `box_y_compare_`, and `b
 we haven't yet defined.
 
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
-    #include "rtweekend.h"
-
     #include "aabb.h"
     #include "hittable.h"
     #include "hittable_list.h"
@@ -1237,8 +1215,6 @@ Constant Color Texture
     #ifndef TEXTURE_H
     #define TEXTURE_H
 
-    #include "rtweekend.h"
-
     class texture {
       public:
         virtual ~texture() = default;
@@ -1346,8 +1322,6 @@ To support procedural textures, we'll extend the `lambertian` class to work with
 colors:
 
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
-    #include "rtweekend.h"
-
     #include "hittable.h"
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     #include "texture.h"
@@ -1651,7 +1625,7 @@ Update the `sphere::hit()` function to use this function to update the hit recor
 
             rec.t = root;
             rec.p = r.at(rec.t);
-            vec3 outward_normal = (rec.p - center) / radius;
+            vec3 outward_normal = (rec.p - current_center) / radius;
             rec.set_face_normal(r, outward_normal);
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
             get_sphere_uv(outward_normal, rec.u, rec.v);
@@ -1834,10 +1808,6 @@ write) an image loading library that provides similar functionality.
 <div class='together'>
 The `image_texture` class uses the `rtw_image` class:
 
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
-    #include "rtweekend.h"
-
-
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     #include "rtw_stb_image.h"
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
@@ -1977,8 +1947,6 @@ code to make it all happen:
     #ifndef PERLIN_H
     #define PERLIN_H
 
-    #include "rtweekend.h"
-
     class perlin {
       public:
         perlin() {
@@ -2031,10 +1999,6 @@ code to make it all happen:
 
 <div class='together'>
 Now if we create an actual texture that takes these floats between 0 and 1 and creates grey colors:
-
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
-    #include "rtweekend.h"
-
 
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     #include "perlin.h"
@@ -2632,8 +2596,6 @@ Now we're ready for the first sketch of the new `quad` class:
     #ifndef QUAD_H
     #define QUAD_H
 
-    #include "rtweekend.h"
-
     #include "hittable.h"
 
     class quad : public hittable {
@@ -2826,6 +2788,7 @@ our quadrilateral.
         }
 
         ...
+    }
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     [Listing [quad-plane2]: <kbd>[quad.h]</kbd> hit() method for the infinite plane]
 
@@ -2891,6 +2854,7 @@ The vector $\mathbf{w}$ is constant for a given quadrilateral, so we'll cache th
 
             set_bounding_box();
         }
+
         ...
 
       private:
@@ -3077,8 +3041,6 @@ test method from the hit method.
         vec3 normal;
         double D;
     };
-
-    #endif
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     [Listing [quad-final]: <kbd>[quad.h]</kbd> Final quad class]
 
@@ -3531,8 +3493,6 @@ The Cornell Box usually has two blocks in it. These are rotated relative to the 
 create a function that returns a box, by creating a `hittable_list` of six rectangles:
 
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
-    #include "rtweekend.h"
-
     #include "hittable.h"
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
     #include "hittable_list.h"
@@ -4016,8 +3976,6 @@ The resulting class is:
     #ifndef CONSTANT_MEDIUM_H
     #define CONSTANT_MEDIUM_H
 
-    #include "rtweekend.h"
-
     #include "hittable.h"
     #include "material.h"
     #include "texture.h"
@@ -4130,8 +4088,6 @@ If we replace the two blocks with smoke and fog (dark and light particles), and 
 bigger (and dimmer so it doesn’t blow out the scene) for faster convergence:
 
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++
-    #include "rtweekend.h"
-
     #include "bvh.h"
     #include "camera.h"
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ C++ highlight
@@ -4361,8 +4317,8 @@ Basic Data
   - **Title (series)**: “Ray Tracing in One Weekend Series”
   - **Title (book)**: “Ray Tracing: The Next Week”
   - **Author**: Peter Shirley, Trevor David Black, Steve Hollasch
-  - **Version/Edition**: vXX.XX.XX
-  - **Date**: 20XX-XX-XX
+  - **Version/Edition**: XXVersion
+  - **Date**: XXYear-XXMonth-XXDay
   - **URL (series)**: <https://raytracing.github.io/>
   - **URL (book)**: <https://raytracing.github.io/books/RayTracingTheNextWeek.html>
 
@@ -4383,13 +4339,13 @@ Snippets
 
   ### LaTeX and BibTex
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    ~\cite{Shirley20XXRTW2}
+    ~\cite{ShirleyXXYearRTW2}
 
-    @misc{Shirley20XXRTW2,
+    @misc{ShirleyXXYearRTW2,
        title = {Ray Tracing: The Next Week},
        author = {Peter Shirley, Trevor David Black, Steve Hollasch},
-       year = {20XX},
-       month = {XXXXXX},
+       year = {XXYear},
+       month = {XXMonth},
        note = {\small \texttt{https://raytracing.github.io/books/RayTracingTheNextWeek.html}},
        url = {https://raytracing.github.io/books/RayTracingTheNextWeek.html}
     }
@@ -4399,13 +4355,13 @@ Snippets
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     \usepackage{biblatex}
 
-    ~\cite{Shirley20XXRTW2}
+    ~\cite{ShirleyXXYearRTW2}
 
-    @online{Shirley20XXRTW2,
+    @online{ShirleyXXYearRTW2,
        title = {Ray Tracing: The Next Week},
        author = {Peter Shirley, Trevor David Black, Steve Hollasch},
-       year = {20XX},
-       month = {XXXXXX},
+       year = {XXYear},
+       month = {XXMonth},
        url = {https://raytracing.github.io/books/RayTracingTheNextWeek.html}
     }
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
