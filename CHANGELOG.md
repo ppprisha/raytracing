@@ -7,6 +7,7 @@ Change Log / Ray Tracing in One Weekend
 
 ### In One Weekend
   - Fix    -- Fix equation for refracted rays of non-unit length (#1644)
+  - Fix    -- Typo "trigonometric qualities" -> "trigonometric identities"
 
 ### The Next Week
 
