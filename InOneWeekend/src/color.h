@@ -11,6 +11,7 @@
 // along with this software. If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 //==============================================================================================
 
+#include "rtweekend.h"
 #include <iostream>
 #include "interval.h"
 #include "vec3.h"
